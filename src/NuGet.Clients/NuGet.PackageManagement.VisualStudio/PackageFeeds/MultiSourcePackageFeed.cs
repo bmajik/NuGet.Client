@@ -3,16 +3,21 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.Composition;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+//using Microsoft.VisualStudio.ComponentModelHost;
+using Microsoft.VisualStudio.Shell;
 using NuGet.Common;
 using NuGet.Indexing;
 using NuGet.PackageManagement.Telemetry;
 using NuGet.Protocol.Core.Types;
 using NuGet.VisualStudio;
 using NuGet.VisualStudio.Telemetry;
+
+using Recommender = NugetRecommender.VisualStudio.Contracts;
 
 namespace NuGet.PackageManagement.VisualStudio
 {
@@ -28,6 +33,12 @@ namespace NuGet.PackageManagement.VisualStudio
         private readonly INuGetUILogger _logger;
         private readonly INuGetTelemetryService _telemetryService;
 
+        /* MEF style
+        [Import]
+        Lazy<Recommender.IVsNugetPackageRecommender> NugetRecommender { get; set; }
+        */
+
+            Recommender.IVsNugetPackageRecommender NugetRecommender { get; set; }
         public bool IsMultiSource => _sourceRepositories.Length > 1;
 
         private class TelemetryState
@@ -97,10 +108,40 @@ namespace NuGet.PackageManagement.VisualStudio
             _sourceRepositories = sourceRepositories.ToArray();
             _telemetryService = telemetryService;
             _logger = logger;
+
+            
+            try
+            {
+                //mattev todo: init component here?
+
+                // try as a synchronouse VS service
+                NugetRecommender = Package.GetGlobalService(typeof(Recommender.SVsNugetRecommenderService)) as Recommender.IVsNugetPackageRecommender;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                // don't knock over nuget b/c of recommender failure
+            }
         }
 
         public async Task<SearchResult<IPackageSearchMetadata>> SearchAsync(string searchText, SearchFilter filter, CancellationToken cancellationToken)
         {
+
+            try
+            {
+                // be able to call component here.
+                //mattev todo: call the correct recommendation method :)
+                if (NugetRecommender != null)
+                {
+                    await NugetRecommender.SayHelloMessageAsync("test 1", cancellationToken);
+                    var message = await NugetRecommender.GetHelloMessageAsync("test 2", cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+
             var searchOperationId = Guid.NewGuid();
             if (_telemetryService != null)
             {
@@ -198,10 +239,10 @@ namespace NuGet.PackageManagement.VisualStudio
                 return SearchResult.Empty<IPackageSearchMetadata>();
             }
 
-            var aggregatedTask = Task.WhenAll(searchTasks.Values);
+            var aggregatedTask = System.Threading.Tasks.Task.WhenAll(searchTasks.Values);
 
             RefreshToken refreshToken = null;
-            if (aggregatedTask != await Task.WhenAny(aggregatedTask, Task.Delay(DefaultTimeout)))
+            if (aggregatedTask != await System.Threading.Tasks.Task.WhenAny(aggregatedTask, System.Threading.Tasks.Task.Delay(DefaultTimeout)))
             {
                 refreshToken = new AggregatedRefreshToken
                 {
@@ -222,7 +263,7 @@ namespace NuGet.PackageManagement.VisualStudio
             var timeAggregation = new Stopwatch();
             if (completedOnly.Any())
             {
-                var results = await Task.WhenAll(completedOnly.Select(kv => kv.Value));
+                var results = await System.Threading.Tasks.Task.WhenAll(completedOnly.Select(kv => kv.Value));
                 timings = results.Select(e => e.Duration);
                 timeAggregation.Start();
                 aggregated = await AggregateSearchResultsAsync(searchText, results, telemetryState);
@@ -357,7 +398,7 @@ namespace NuGet.PackageManagement.VisualStudio
             return result;
         }
 
-        private void LogError(Task task, object state)
+        private void LogError(System.Threading.Tasks.Task task, object state)
         {
             if (_logger == null)
             {
